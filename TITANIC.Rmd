@@ -30,7 +30,7 @@ The dataset appears to contain information about Titanic passengers. It includes
 
 ```{r echo=FALSE, results="hide"}
 
-train <- read.csv("C:/Users/norbe/Desktop/Język R - materiały/titanic/train.csv", stringsAsFactors = FALSE)
+train <- read.csv("train.csv", stringsAsFactors = FALSE)
 summary(train)
 str(train)
 head(train)
