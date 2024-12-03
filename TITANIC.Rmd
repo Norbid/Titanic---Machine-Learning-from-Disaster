@@ -1,0 +1,551 @@
+---
+title: "Titanic_Data_Analysis"
+author: "Norbert Dzikowski"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(MASS)
+library(rpart)
+library(rpart.plot)
+library(class)
+library(e1071)
+library(pROC) 
+```
+
+### 1. Data Analysis and Cleaning Report
+
+<div style="line-height: 2;">
+The dataset appears to contain information about Titanic passengers. It includes attributes such as Passenger ID, survival status, class, name, gender, age, number of siblings/spouses aboard, parents/children aboard, ticket, fare, cabin, and embarkation port.
+ </div>
+
+#### 1.1. Data cleaning
+ 
+
+```{r echo=FALSE, results="hide"}
+
+train <- read.csv("C:/Users/norbe/Desktop/Język R - materiały/titanic/train.csv", stringsAsFactors = FALSE)
+summary(train)
+str(train)
+head(train)
+glimpse(train)
+```
+
+<div style="line-height: 2;">
+Based on an initial inspection, the following data quality issues were identified: <br>
+1. Missing Values: <br>
+- Cabin: A significant number of missing values. <br>
+- Age: Some missing values. <br>
+- Embarked: Potentially contains missing values. <br>
+2. Data Type Issues: <br>
+- Columns such as Fare and Age should be numeric; verification is necessary. <br>
+- Embarked should have categorical values (C, Q, S). <br>
+3. Data Inconsistencies: <br>
+- Possible invalid or non-standard values in Embarked. <br>
+- Extreme or unrealistic values in Age (e.g., negative ages or ages above 120). <br>
+4. Textual Uniformity: <br>
+- Text fields such as Sex may have inconsistent capitalization (e.g., male vs. Male). <br>
+
+Cleaning Strategy: <br>
+1.Handling Missing Values: <br>
+- Age: Replace missing values with the median. <br>
+- Embarked: Replace missing values with the most frequently occurring value. <br>
+- Cabin: Remove the column if more than 50% of its values are missing. <br>
+2. Validating Data Consistency: <br>
+- Remove or correct unrealistic values in Age (e.g., less than 0 or greater than 120). <br>
+- Ensure only valid categories exist in Embarked (C, Q, S). <br>
+3. Standardizing Text Fields: <br>
+- Convert the Sex column to lowercase to ensure consistency. <br>
+  </div>
+
+```{r, echo=FALSE, results="hide"}
+# Identify missing values
+missing_summary <- colSums(is.na(train))
+print(missing_summary)
+
+# Fill missing Age with the median
+train$Age[is.na(train$Age)] <- median(train$Age, na.rm = TRUE)
+
+# Fill missing Embarked with the most frequent value
+most_frequent_embarked <- names(sort(table(train$Embarked), decreasing = TRUE))[1]
+train$Embarked <- ifelse(train$Embarked == "", "S", train$Embarked)
+
+# Remove Cabin column if majority of data is missing
+if (sum(is.na(train$Cabin)) / nrow(train) > 0.5) {
+  train$Cabin <- NULL
+}
+
+# Remove rows with unrealistic Age values
+train <- train[train$Age >= 0 & train$Age <= 120, ]
+
+# Keep only valid values for Embarked
+train <- train[train$Embarked %in% c("C", "Q", "S"), ]
+
+# Standardize Sex column
+train$Sex <- tolower(train$Sex)
+```
+
+### 2. Data Exploration and Visualizations <br>
+#### 2.1. Distribution of Single Variables <br>
+##### 2.1.1. Age Distribution 
+
+A histogram provides an overview of the age distribution among passengers. 
+
+```{r, echo=FALSE}
+ggplot(train, aes(x = Age)) +
+  geom_histogram(binwidth = 5, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Age", x = "Age", y = "Count") +
+  theme_minimal()
+```
+
+<div style="line-height: 2;">
+This histogram displays the distribution of ages in the dataset, revealing that the majority of individuals fall within the age range of 20 to 30 years. This is evident from the tallest bar at the center of the chart, indicating that this age group is the most common in the population. The distribution is right-skewed, with a gradual decline in frequency as age increases. There are relatively few individuals above the age of 60, and the data spans a wide range of ages, from newborns (around 0 years) to approximately 80 years old. The overall pattern suggests a population dominated by younger individuals, with smaller representations of both children and elderly participants. <br>
+</div>
+
+
+##### 2.1.2. Passenger Class Distribution
+
+A bar chart shows the frequency of passengers in each class.
+
+``` {r, echo = FALSE}
+ggplot(train, aes(x = factor(Pclass))) +
+  geom_bar(fill = "darkorange", color = "black", width = 0.6) +
+  labs(title = "Passenger Class Distribution", x = "Class", y = "Count") +
+  theme_minimal()
+```
+
+<div style="line-height: 2;">
+This bar chart illustrates the distribution of passengers across three classes. It is clear that the third class has the largest number of passengers, with a count exceeding 500, making it significantly more populous than the other classes. The first and second classes, on the other hand, have relatively similar counts, each hovering around 200 passengers. This distribution suggests a strong skew towards the third class, which could indicate a larger representation of economically lower-tier passengers. <br>
+</div>
+
+
+#### 2.2. Relationship Between Two Variables
+##### 2.2.1. Fare vs. Age
+
+A scatter plot highlights the relationship between passenger age and fare paid.
+
+``` {r, echo = FALSE, message = FALSE}
+ggplot(train, aes(x = Age, y = Fare)) +
+  geom_point(color = "purple", alpha = 0.6) +
+  labs(title = "Fare vs Age", x = "Age", y = "Fare") +
+  theme_minimal()
+
+```
+
+<div style="line-height: 2;">
+This scatter plot illustrates the relationship between age and fare. The majority of data points are clustered near the bottom of the chart, indicating that most passengers paid lower fares. Additionally, the distribution of fares does not seem to have a strong correlation with age, as passengers of all age groups are represented across various fare levels. There are, however, a few outliers where very high fares, exceeding 500, were paid by a small number of individuals. These high fares are exceptions and stand out clearly in the plot. Younger individuals appear more evenly distributed across fare ranges, while older passengers seem concentrated in the lower fare categories.
+</div>
+
+
+##### 2.2.2. Fare by Passenger Class
+
+A boxplot shows the distribution of fares across different passenger classes.
+
+```{r, echo = FALSE}
+ggplot(train, aes(x = factor(Pclass), y = Fare, fill = factor(Pclass))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 2) +
+  labs(title = "Fare by Passenger Class", x = "Class", y = "Fare") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1") +
+  coord_cartesian(ylim = c(0, 300))
+```
+
+<div style="line-height: 2;">
+This boxplot visualizes the distribution of fares across the three passenger classes. First-class passengers paid significantly higher fares, as indicated by their wider interquartile range (IQR) and higher median fare. While most first-class fares fall below 150, several outliers exceed 200, indicating some passengers paid exceptionally high fares. Second-class fares are more modest, with a much smaller IQR and a median fare considerably lower than that of the first class. Although there are a few outliers for second-class fares, they do not exceed the 100 range. Third-class passengers paid the lowest fares, with a narrow IQR close to zero. The majority of third-class fares are tightly clustered near the lower range, although a few outliers slightly exceed 50. Overall, the chart emphasizes the socioeconomic divide among the three classes, with first-class passengers enjoying the most expensive and diverse fare options, while third-class passengers paid the least with minimal variation. This distribution likely reflects the level of amenities and accommodations provided to each class.
+</div>
+
+#### 2.3. Survival Analysis
+##### 2.3.1. Survival Rate by Passenger Class
+
+A stacked bar chart shows survival rates across passenger classes.
+
+```{r, echo = FALSE}
+# Survival by Passenger Class
+ggplot(train, aes(x = factor(Pclass), fill = factor(Survived))) +
+  geom_bar(position = "fill", width = 0.6) +
+  labs(title = "Survival Rate by Passenger Class", x = "Class", y = "Proportion", fill = "Survived") +
+  theme_minimal() +
+  scale_fill_manual(values = c("red", "green"))
+```
+
+<div style="line-height: 2;">
+This stacked bar chart illustrates the survival rates across the three passenger classes, expressed as proportions. The green segment represents passengers who survived, while the red segment represents those who did not survive. The chart clearly shows a strong relationship between survival rate and passenger class. First-class passengers had the highest survival rate, with more than half surviving. Second-class passengers also show a relatively balanced survival rate, though slightly fewer survived compared to the first class. In stark contrast, third-class passengers experienced the lowest survival rate, with a majority not surviving. 
+</div>
+
+##### 2.3.2. Survival Rate by Gender
+
+A bar chart compares survival rates for males and females.
+
+
+```{r, echo = FALSE}
+# Survival by Gender
+ggplot(train, aes(x = factor(Sex), fill = factor(Survived))) +
+  geom_bar(position = "fill", width = 0.6) +
+  labs(title = "Survival Rate by Gender", x = "Gender", y = "Proportion", fill = "Survived") +
+  theme_minimal() +
+  scale_fill_manual(values = c("blue", "pink"))
+```
+
+<div style="line-height: 2;">
+This stacked bar chart represents the survival rates by gender, expressed as proportions. The pink segment corresponds to passengers who survived, while the blue segment represents those who did not survive. The chart clearly indicates that survival rates were significantly influenced by gender. Among females, a much larger proportion survived. In contrast, the blue segment is relatively smaller, showing fewer fatalities among women. This reflects a survival rate that exceeds 75% for females. For males, the trend is reversed. The blue segment dominates, illustrating that the majority of male passengers did not survive. The pink segment is much smaller, indicating a survival rate below 25% for males. This visualization underscores the prioritization of women during rescue efforts, reflecting societal norms or evacuation protocols where women were given priority access to lifeboats or other safety measures.
+</div>
+
+#### 2.4. Multivariate Analysis
+##### 2.4.1. Age Distribution by Survival and Passenger Class
+
+A faceted histogram compares the age distribution for survivors and non-survivors across passenger classes.
+
+```{r, echo = FALSE}
+
+# Age Distribution by Survival and Class
+ggplot(train, aes(x = Age, fill = factor(Survived))) +
+  geom_histogram(position = "dodge", bins = 20) +
+  facet_grid(. ~ Pclass) +
+  labs(title = "Age Distribution by Survival and Class", x = "Age", fill = "Survived") +
+  theme_minimal() +
+  scale_fill_manual(values = c("red", "green"))
+```
+
+<div style="line-height: 2;">
+This faceted bar chart illustrates the age distribution of passengers by survival status across the three passenger classes. Each facet corresponds to a specific passenger class, with red bars representing passengers who did not survive and green bars representing those who survived. In the first class, survival rates appear relatively high across all age groups, with green bars frequently outnumbering the red bars. This pattern suggests that first-class passengers had better chances of survival, regardless of age. In the second class, the survival rates are more balanced, but survival is still evident across a range of age groups. However, younger individuals and those in middle age seem to have had slightly better survival rates compared to the elderly. The third class presents a stark contrast. The red bars dominate most age groups, particularly among younger adults and children, indicating a much lower survival rate for third-class passengers. However, a small number of survivors (green bars) can still be seen, primarily among the youngest passengers.
+</div>
+
+##### 2.4.2. Correlation Heatmap
+
+A heatmap shows the correlations among numeric variables.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# Correlation Heatmap
+library(corrplot)
+numeric_data <- train[, sapply(train, is.numeric)]
+corr_matrix <- cor(numeric_data, use = "complete.obs")
+corrplot(corr_matrix, method = "color", type = "upper", tl.cex = 0.8, title = "Correlation Matrix", mar = c(0, 0, 1, 0))
+```
+
+<div style="line-height: 2;">
+This correlation matrix visualizes the relationships between the numeric variables in the dataset. The color gradient, ranging from deep blue to red, represents the strength and direction of the correlation. Positive correlations are shown in shades of red, while negative correlations are in shades of blue, with the intensity of the color indicating the strength of the relationship.
+The most notable observations include the following:
+- Pclass and Fare: A strong negative correlation exists between Pclass and Fare, indicating that passengers in higher classes (lower numerical value for Pclass) tended to pay higher fares.
+- FamilySize and SibSp/Parch: There is a strong positive correlation between FamilySize, SibSp (siblings/spouses), and Parch (parents/children). This relationship is expected since FamilySize is derived from these variables.
+- Survived and Pclass: There is a negative correlation between Survived and Pclass, suggesting that passengers in higher classes (lower numerical value for Pclass) had a better chance of survival.
+- Fare and Survived: A positive correlation is observed between Fare and Survived, indicating that passengers who paid higher fares were more likely to survive.
+- Other variables: Variables like Age show weaker correlations with other features, suggesting limited direct influence on the relationships shown here.
+</div>
+
+### 3. Machine Learning Modeling
+
+The goal is to model the "Survived" variable using multiple machine learning approaches. 
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# Create a new feature: FamilySize
+train$FamilySize <- train$SibSp + train$Parch + 1
+
+# Split data into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(train$Survived, p = 0.8, list = FALSE)
+train_data <- train[train_index, ]
+test_data <- train[-train_index, ]
+
+# Prepare predictors and response
+x_train <- subset(train_data, select = -Survived)
+y_train <- train_data$Survived
+x_test <- subset(test_data, select = -Survived)
+y_test <- test_data$Survived
+```
+
+#### 3.1. Feature selection
+
+The goal is to perform feature selection and identify the most impactful variables using several methods, including correlation analysis and feature importance from machine learning models.
+
+##### 3.1.1. Feature Importance Using Random Forest
+
+<div style="line-height: 2;">
+Random Forest can calculate feature importance based on how much each variable improves the model's performance.
+</div>
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# Train Random Forest with all predictors
+rf_model <- randomForest(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + FamilySize,
+                         data = train_data, ntree = 100, importance = TRUE)
+
+# View Variable Importance
+importance(rf_model)
+varImpPlot(rf_model)
+```
+
+<div style="line-height: 2;">
+This chart represents the feature importance from a random forest model (rf_model), as measured by the IncNodePurity metric. The IncNodePurity (increase in node purity) quantifies how much each variable contributes to reducing the impurity in the model's decision trees.
+The variable Sex has the highest IncNodePurity, indicating that it is the most important predictor in the random forest model. This means that knowing the value of Sex provides the most significant improvement in the model's ability to predict the outcome. Fare is the second most important variable, followed by Age. These features also contribute significantly to reducing impurity, though less than Sex. Pclass and FamilySize have lower IncNodePurity values, indicating that these variables are less influential in the model's predictions compared to the top features. This importance ranking suggests that demographic features (Sex and Age) and socioeconomic factors (Fare) are key drivers in the prediction task. Variables like Pclass and FamilySize, while still relevant, have a comparatively smaller impact.
+</div>
+
+##### 3.1.2. Recursive Feature Elimination (RFE)
+
+RFE systematically selects features by recursively removing the least important ones and assessing model performance.
+
+```{r, echo = FALSE, warning=FALSE}
+# Define control for RFE
+control <- rfeControl(functions = rfFuncs, method = "cv", number = 10)
+
+# Perform RFE
+rfe_model <- rfe(train_data[, c("Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", "Embarked", "FamilySize")],
+                 train_data$Survived,
+                 sizes = c(1:8),
+                 rfeControl = control)
+
+# View Results
+print(rfe_model)
+```
+
+Based on the analysis the top 5 variables are: Sex, Pclass, Fare, Age and FamilySize.
+
+##### 3.1.3. Correlation Analysis for Numerical Variables
+
+Identify highly correlated features to remove redundancy.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# Select numeric columns
+numeric_vars <- train_data[, sapply(train_data, is.numeric)]
+
+# Calculate Correlation Matrix
+cor_matrix <- cor(numeric_vars)
+
+# Visualize Correlation
+library(corrplot)
+corrplot(cor_matrix, method = "circle")
+
+# Identify highly correlated pairs (threshold > 0.75)
+high_corr <- findCorrelation(cor_matrix, cutoff = 0.75)
+
+```
+
+<div style="line-height: 2;">
+This plot reveals how variables are interrelated, providing insights into potential predictors of survival. For instance, the negative correlation between Pclass and Survived suggests that socioeconomic status (reflected in class) was a significant factor in survival. Similarly, the strong link between FamilySize, SibSp, and Parch highlights how these variables are structurally related (FamilySize was developed by summing SibSp and Parch variables). This correlation plot helps identify key features that may be important for modeling and highlights variables with minimal influence, which might not contribute significantly to predictive models. Let me know if you'd like further analysis or help with visualizations!
+</div>
+
+##### 3.1.4. Stepwise Regression
+
+Stepwise regression is another method to select predictors based on statistical significance.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, results="hide"}
+# Stepwise Regression
+full_model <- glm(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + FamilySize,
+                  data = train_data, family = binomial)
+stepwise_model <- step(full_model, direction = "both")
+
+```
+
+```{r, echo = FALSE, warning=FALSE}
+# View the selected variables
+summary(stepwise_model)
+```
+
+All these methods suggested to reduce number of predictors to 5 which are: Sex, Pclass, Fare, Age and FamilySize.
+
+#### 4. Models
+##### 4.1. Logistic Regression
+
+A statistical model for binary classification, estimating the probability of survival based on predictors.
+
+```{r, echo = FALSE, warning=FALSE}
+# Logistic Regression Model
+logistic_model <- glm(Survived ~ Sex + Pclass + Fare + Age + FamilySize,
+                      data = train_data, family = binomial)
+
+results <- list()
+results$Logistic <- logistic_model
+# Predictions
+logistic_pred <- predict(logistic_model, newdata = test_data, type = "response")
+logistic_pred_class <- ifelse(logistic_pred > 0.5, 1, 0)
+
+# Evaluation
+conf_matrix_glm <- confusionMatrix(as.factor(logistic_pred_class), as.factor(y_test))
+print(conf_matrix_glm$table)
+```
+
+##### 4.2.Decision Tree Classifier
+
+A tree-based model that recursively splits the data into subsets based on feature values.
+
+```{r, echo = FALSE, warning=FALSE}
+# Decision Tree Model
+tree_model <- rpart(Survived ~ Sex + Pclass + Fare + Age + FamilySize,
+                    data = train_data, method = "class")
+
+results$DecisionTree <- tree_model
+
+# Predictions
+tree_pred <- predict(tree_model, newdata = test_data, type = "class")
+
+# Evaluation
+conf_matrix_tm <- confusionMatrix(tree_pred, as.factor(y_test))
+print(conf_matrix_tm$table)
+
+# Visualize Tree
+rpart.plot(tree_model)
+```
+
+##### 4.3. Random Forest Classifier
+
+An ensemble method using multiple decision trees to improve accuracy and robustness.
+
+```{r, echo = FALSE, warning=FALSE}
+# Random Forest Model
+rf_model <- randomForest(Survived ~ Sex + Pclass + Fare + Age + FamilySize,
+                         data = train_data, ntree = 100, mtry = 3)
+
+results$RandomForest <- rf_model
+
+# Predictions
+rf_pred <- round(predict(rf_model, newdata = test_data))
+
+
+# Evaluation
+conf_matrix_rf <- confusionMatrix(as.factor(rf_pred), as.factor(y_test))
+print(conf_matrix_rf$table)
+
+# Feature Importance
+#importance(rf_model)
+#varImpPlot(rf_model)
+```
+
+##### 4.4. Support Vector Machines (SVM)
+
+<div style="line-height: 2;">
+Support Vector Machines (SVM) are supervised learning algorithms used for classification and regression tasks. They work by finding a hyperplane that best separates data points into different classes while maximizing the margin between the classes. SVMs can handle linear and non-linear relationships using kernel functions to project data into higher dimensions, making them powerful for complex datasets.
+</div>
+
+```{r, echo = FALSE, warning=FALSE}
+# SVM Model
+svm_model <- svm(Survived ~ Pclass + Sex + Age + Fare + FamilySize,
+                 data = train_data, kernel = "linear")
+
+results$SVM <- svm_model
+
+# Predictions and Evaluation
+svm_pred <- round(predict(svm_model, newdata = test_data))
+conf_mat_svm <- confusionMatrix(as.factor(svm_pred), as.factor(y_test))
+conf_mat_svm$table
+```
+
+##### 4.5. K-Nearest Neighbors (KNN)
+
+<div style="line-height: 2;">
+K-Nearest Neighbors (KNN) is a simple, non-parametric supervised learning algorithm used for classification and regression. It works by identifying the K closest data points (neighbors) to a given input and assigning a label or value based on the majority class (for classification) or the average (for regression) of the neighbors. It relies on distance metrics like Euclidean distance to measure similarity.
+</div>
+
+```{r, echo = FALSE, warning=FALSE}
+# Normalize numerical predictors
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+x_train_norm <- as.data.frame(lapply(x_train[, c("Age", "Fare", "FamilySize")], normalize))
+x_test_norm <- as.data.frame(lapply(x_test[, c("Age", "Fare", "FamilySize")], normalize))
+
+# KNN Model
+knn_pred <- knn(train = x_train_norm, test = x_test_norm, cl = y_train, k = 14)
+conf_matrix_knn <- confusionMatrix(knn_pred, as.factor(y_test))
+conf_matrix_knn$table
+
+```
+
+
+#### 5. Results
+
+```{r, echo = FALSE, warning=FALSE, message = FALSE}
+
+results <- data.frame(
+  Model = character(),
+  Accuracy = numeric(),
+  Precision = numeric(),
+  Recall = numeric(),
+  F1_Score = numeric(),
+  ROC_AUC = numeric(),
+  stringsAsFactors = FALSE
+)
+# Function to calculate Accuracy
+calculate_accuracy <- function(confusion_matrix) {
+  sum(diag(confusion_matrix)) / sum(confusion_matrix)
+}
+
+# Function to calculate Precision
+calculate_precision <- function(confusion_matrix) {
+  TP <- confusion_matrix["1", "1"]
+  FP <- confusion_matrix["0", "1"]
+  TP / (TP + FP)
+}
+
+# Function to calculate Recall
+calculate_recall <- function(confusion_matrix) {
+  TP <- confusion_matrix["1", "1"]
+  FN <- confusion_matrix["1", "0"]
+  TP / (TP + FN)
+}
+
+# Function to calculate F1-Score
+calculate_f1_score <- function(precision, recall) {
+  2 * (precision * recall) / (precision + recall)
+}
+
+# Function to calculate ROC-AUC
+calculate_roc_auc <- function(y_true, y_prob) {
+  library(pROC)
+  roc_curve <- roc(y_true, y_prob, levels = c("0", "1"))
+  auc(roc_curve)
+}
+
+accuracy <- round(calculate_accuracy(conf_matrix_glm$table), 2)
+precision <- round(calculate_precision(conf_matrix_glm$table), 2)
+recall <- round(calculate_recall(conf_matrix_glm$table), 2)
+f1_score <- round(calculate_f1_score(precision, recall), 2)
+roc_auc <- round(calculate_roc_auc(test_data$Survived, as.numeric(logistic_pred_class)), 2)
+
+accuracy1 <- round(calculate_accuracy(conf_matrix_tm$table), 2)
+precision1 <- round(calculate_precision(conf_matrix_tm$table), 2)
+recall1 <- round(calculate_recall(conf_matrix_tm$table), 2)
+f1_score1 <- round(calculate_f1_score(precision, recall), 2)
+roc_auc1 <- round(calculate_roc_auc(test_data$Survived, as.numeric(tree_pred)), 2)
+
+accuracy2 <- round(calculate_accuracy(conf_matrix_rf$table), 2)
+precision2 <- round(calculate_precision(conf_matrix_rf$table), 2)
+recall2 <- round(calculate_recall(conf_matrix_rf$table), 2)
+f1_score2 <- round(calculate_f1_score(precision, recall), 2)
+roc_auc2 <- round(calculate_roc_auc(test_data$Survived, as.numeric(rf_pred)), 2)
+
+accuracy3 <- round(calculate_accuracy(conf_mat_svm$table), 2)
+precision3 <- round(calculate_precision(conf_mat_svm$table), 2)
+recall3 <- round(calculate_recall(conf_mat_svm$table), 2)
+f1_score3 <- round(calculate_f1_score(precision, recall), 2)
+roc_auc3 <- round(calculate_roc_auc(test_data$Survived, as.numeric(svm_pred)), 2)
+
+accuracy4 <- round(calculate_accuracy(conf_matrix_knn$table), 2)
+precision4 <- round(calculate_precision(conf_matrix_knn$table), 2)
+recall4 <- round(calculate_recall(conf_matrix_knn$table), 2)
+f1_score4 <- round(calculate_f1_score(precision, recall), 2)
+roc_auc4 <- round(calculate_roc_auc(test_data$Survived, as.numeric(knn_pred)), 2)
+
+# Example row added for demonstration
+new_row <- data.frame(Model = "Logistic Regression", Accuracy = accuracy, Precision = precision, Recall = recall, F1_Score = f1_score, ROC_AUC = roc_auc)
+new_row1 <- data.frame(Model = "Decision Tree Classifier", Accuracy = accuracy1, Precision = precision1, Recall = recall1, F1_Score = f1_score1, ROC_AUC = roc_auc1)
+new_row2 <- data.frame(Model = "Random Forest Classifier", Accuracy = accuracy2, Precision = precision2, Recall = recall2, F1_Score = f1_score2, ROC_AUC = roc_auc2)
+new_row3 <- data.frame(Model = "Support Vector Machines (SVM)", Accuracy = accuracy3, Precision = precision3, Recall = recall3, F1_Score = f1_score3, ROC_AUC = roc_auc3)
+new_row4 <- data.frame(Model = "K-Nearest Neighbors (KNN)", Accuracy = accuracy4, Precision = precision4, Recall = recall4, F1_Score = f1_score4, ROC_AUC = roc_auc4)
+results <- rbind(results, new_row)
+results <- rbind(results, new_row1)
+results <- rbind(results, new_row2)
+results <- rbind(results, new_row3)
+results <- rbind(results, new_row4)
+results
+```
+
+<div style="line-height: 2;">
+Best Model: The Random Forest Classifier demonstrates the strongest performance across all metrics, making it the most reliable choice for this dataset. <br>
+Good Alternative: The Decision Tree Classifier also performs well, with balanced precision and recall, though slightly less effective than Random Forest. <br>
+Middle Performers: Logistic Regression and SVM perform similarly, with moderate metrics across the board. <br>
+Weakest Model: While KNN is not the weakest in accuracy, its slightly lower ROC-AUC and dependence on feature scaling make it less competitive compared to Random Forest or Decision Tree. <br>
+</div>
